@@ -1,0 +1,5 @@
+{
+  "name": "Xiangqi AI (Chinese Chess)",
+  "description": "A fully functional Chinese Chess application featuring an intelligent AI opponent powered by Gemini 2.5 Flash. Features include adjustable difficulty levels, move validation, and a classic wooden board aesthetic.",
+  "requestFramePermissions": []
+}
