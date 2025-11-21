@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Board } from './components/Board';
 import { createInitialBoard, getLegalMovesForPiece, isKingInCheck } from './utils/gameLogic';
-import { getBestMove } from './services/engine'; 
+import { getBestMove, resetEngine } from './services/engine'; 
 import { BoardState, Difficulty, GameStatus, Move, Position, Side, Language, MoveRecord } from './types';
 
 const translations = {
@@ -10,8 +11,9 @@ const translations = {
     subtitle: "Professional Engine",
     redWin: "Red Victory",
     blackWin: "Black Victory",
-    yourTurn: "Your Move",
-    aiThinking: "Thinking...",
+    yourTurn: "Your Turn",
+    opponentTurn: "Opponent's Turn",
+    aiThinking: "AI Thinking",
     difficulty: "Strength",
     language: "Language",
     newGame: "New Game",
@@ -26,6 +28,8 @@ const translations = {
     invalidMove: "Invalid Move",
     undo: "Undo Move",
     check: "Check!",
+    playAs: "Play As",
+    evalAdvantage: "Advantage",
     difficulties: {
       [Difficulty.BEGINNER]: "Novice",
       [Difficulty.INTERMEDIATE]: "Amateur",
@@ -39,7 +43,8 @@ const translations = {
     subtitle: "专业博弈引擎",
     redWin: "红方获胜",
     blackWin: "黑方获胜",
-    yourTurn: "轮到红方",
+    yourTurn: "轮到你走",
+    opponentTurn: "对手思考",
     aiThinking: "AI 思考中",
     difficulty: "棋力",
     language: "语言",
@@ -55,6 +60,8 @@ const translations = {
     invalidMove: "无效走法",
     undo: "悔棋",
     check: "将军!",
+    playAs: "执棋",
+    evalAdvantage: "优劣势",
     difficulties: {
       [Difficulty.BEGINNER]: "新手 (2层)",
       [Difficulty.INTERMEDIATE]: "业余 (4层)",
@@ -68,6 +75,7 @@ const translations = {
 const App: React.FC = () => {
   const [board, setBoard] = useState<BoardState>(createInitialBoard());
   const [turn, setTurn] = useState<Side>(Side.RED);
+  const [playerSide, setPlayerSide] = useState<Side>(Side.RED);
   const [selectedPos, setSelectedPos] = useState<Position | null>(null);
   const [validMoves, setValidMoves] = useState<Position[]>([]);
   const [lastMove, setLastMove] = useState<Move | null>(null);
@@ -78,10 +86,17 @@ const App: React.FC = () => {
   const [isThinking, setIsThinking] = useState(false);
   const [moveHistory, setMoveHistory] = useState<MoveRecord[]>([]);
   const [isCheck, setIsCheck] = useState(false);
-  const [historyStack, setHistoryStack] = useState<{board: BoardState, turn: Side, lastMove: Move | null, status: GameStatus, moveHistory: MoveRecord[]}[]>([]);
+  const [evalScore, setEvalScore] = useState(0); // Positive = Red advantage, Negative = Black
+  const [historyStack, setHistoryStack] = useState<{
+      board: BoardState, 
+      turn: Side, 
+      lastMove: Move | null, 
+      status: GameStatus, 
+      moveHistory: MoveRecord[], 
+      evalScore: number 
+  }[]>([]);
 
-  const playerSide = Side.RED;
-  const aiSide = Side.BLACK;
+  const aiSide = playerSide === Side.RED ? Side.BLACK : Side.RED;
   const t = translations[lang];
 
   const pushHistory = useCallback(() => {
@@ -90,9 +105,10 @@ const App: React.FC = () => {
       turn,
       lastMove,
       status,
-      moveHistory: [...moveHistory]
+      moveHistory: [...moveHistory],
+      evalScore
     }]);
-  }, [board, turn, lastMove, status, moveHistory]);
+  }, [board, turn, lastMove, status, moveHistory, evalScore]);
 
   const performUndo = () => {
     if (historyStack.length < 2) return;
@@ -100,8 +116,8 @@ const App: React.FC = () => {
 
     const newStack = [...historyStack];
     if (newStack.length >= 2) {
-        newStack.pop(); 
-        const targetState = newStack.pop(); 
+        newStack.pop(); // Remove current state
+        const targetState = newStack.pop(); // Get previous valid state (before AI + Player move)
         
         if (targetState) {
             setBoard(targetState.board);
@@ -109,6 +125,7 @@ const App: React.FC = () => {
             setLastMove(targetState.lastMove);
             setStatus(targetState.status);
             setMoveHistory(targetState.moveHistory);
+            setEvalScore(targetState.evalScore);
             setHistoryStack(newStack);
             setAiReasoning("(已悔棋 / Undone)");
             setIsCheck(false);
@@ -173,6 +190,7 @@ const App: React.FC = () => {
     }
   };
 
+  // AI Move Logic
   useEffect(() => {
     if (turn === aiSide && status === GameStatus.PLAYING) {
       const timer = setTimeout(async () => {
@@ -183,12 +201,15 @@ const App: React.FC = () => {
             const result = await getBestMove(board, aiSide, difficulty, lang);
             if (result && result.move) {
                 setAiReasoning(result.reasoning);
+                const globalScore = aiSide === Side.RED ? result.score : -result.score;
+                setEvalScore(globalScore);
+                
                 pushHistory();
                 executeMove(result.move);
             } else {
                 if (isKingInCheck(board, aiSide)) {
-                    setStatus(GameStatus.RED_WIN);
-                    setAiReasoning(lang === Language.CN ? "绝杀，红方胜。" : "Checkmate. Red Wins.");
+                    setStatus(aiSide === Side.RED ? GameStatus.BLACK_WIN : GameStatus.RED_WIN);
+                    setAiReasoning(lang === Language.CN ? "绝杀，比赛结束。" : "Checkmate. Game Over.");
                 } else {
                     setStatus(GameStatus.STALEMATE);
                     setAiReasoning(lang === Language.CN ? "困毙，和棋。" : "Stalemate.");
@@ -201,9 +222,11 @@ const App: React.FC = () => {
     }
   }, [turn, status, board, difficulty, lang, aiSide, executeMove, pushHistory, t]);
 
-  const resetGame = () => {
+  const resetGame = (newSide?: Side) => {
+    resetEngine(); // Reset AI randomness/hash
     setBoard(createInitialBoard());
-    setTurn(Side.RED);
+    setTurn(Side.RED); 
+    if (newSide) setPlayerSide(newSide);
     setStatus(GameStatus.PLAYING);
     setLastMove(null);
     setMoveHistory([]);
@@ -212,6 +235,12 @@ const App: React.FC = () => {
     setValidMoves([]);
     setHistoryStack([]);
     setIsCheck(false);
+    setEvalScore(0);
+  };
+
+  const getEvalBarWidth = () => {
+      const clamped = Math.max(-2000, Math.min(2000, evalScore));
+      return 50 + (clamped / 40); 
   };
 
   return (
@@ -236,14 +265,26 @@ const App: React.FC = () => {
                      <div className={`mt-1 px-3 py-1 rounded text-xs font-bold uppercase tracking-wide border ${
                          status !== GameStatus.PLAYING 
                             ? 'border-amber-500 text-amber-400 bg-amber-900/40' 
-                            : (turn === Side.RED ? 'border-red-800 text-red-400 bg-red-950/30' : 'border-neutral-700 text-neutral-400 bg-neutral-900/50')
+                            : (turn === playerSide ? 'border-green-800 text-green-400 bg-green-950/30' : 'border-amber-800 text-amber-400 bg-amber-950/30')
                      }`}>
                         {status !== GameStatus.PLAYING 
                          ? (status === GameStatus.RED_WIN ? t.redWin : (status === GameStatus.BLACK_WIN ? t.blackWin : "DRAW")) 
-                         : (turn === Side.RED ? t.yourTurn : t.aiThinking)}
+                         : (turn === playerSide ? t.yourTurn : t.opponentTurn)}
                      </div>
                 </div>
              </div>
+             
+            {/* Evaluation Gauge */}
+            <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden relative shadow-inner border border-neutral-700/50 group">
+                <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-20 transform -translate-x-1/2"></div>
+                <div 
+                    className="absolute top-0 bottom-0 bg-gradient-to-r from-neutral-800 via-red-600 to-red-500 transition-all duration-1000 ease-out"
+                    style={{ width: `${getEvalBarWidth()}%` }}
+                ></div>
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black/80 text-[10px] px-2 py-1 rounded text-white pointer-events-none whitespace-nowrap">
+                    {t.evalAdvantage}: {evalScore > 0 ? `+${evalScore} (Red)` : `${evalScore} (Black)`}
+                </div>
+            </div>
 
             {/* Board Component */}
             <div className="shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)] rounded-lg">
@@ -254,6 +295,7 @@ const App: React.FC = () => {
                     lastMove={lastMove}
                     validMoves={validMoves}
                     isPlayerTurn={turn === playerSide}
+                    flipped={playerSide === Side.BLACK}
                 />
             </div>
         </div>
@@ -263,33 +305,54 @@ const App: React.FC = () => {
             
             {/* Control Panel */}
             <div className="bg-[#231e1a]/80 backdrop-blur-md border border-white/5 rounded-xl p-6 shadow-xl">
-                <div className="grid grid-cols-2 gap-5 mb-6">
+                <div className="space-y-4 mb-6">
+                    {/* Play As Selection */}
                     <div className="space-y-2">
-                        <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.difficulty}</label>
-                        <select 
-                            value={difficulty} 
-                            onChange={(e) => setDifficulty(e.target.value as Difficulty)}
-                            className="w-full bg-[#15120f] border border-[#3e3228] rounded-lg px-3 py-2 text-sm text-amber-100 focus:border-amber-500 outline-none transition-colors hover:border-amber-700"
-                            disabled={turn === aiSide}
-                        >
-                            {Object.values(Difficulty).map(d => (
-                                <option key={d} value={d}>{t.difficulties[d]}</option>
-                            ))}
-                        </select>
+                         <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.playAs}</label>
+                         <div className="flex gap-2">
+                             <button 
+                                onClick={() => resetGame(Side.RED)}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.RED ? 'bg-red-900/40 border-red-700 text-red-400 shadow-[0_0_10px_rgba(220,38,38,0.2)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                             >
+                                {t.red} (先手)
+                             </button>
+                             <button 
+                                onClick={() => resetGame(Side.BLACK)}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.BLACK ? 'bg-neutral-800 border-neutral-500 text-neutral-300 shadow-[0_0_10px_rgba(255,255,255,0.1)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                             >
+                                {t.black} (后手)
+                             </button>
+                         </div>
                     </div>
-                    <div className="space-y-2">
-                        <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.language}</label>
-                        <div className="flex bg-[#15120f] rounded-lg border border-[#3e3228] overflow-hidden h-[38px]">
-                            <button onClick={() => setLang(Language.CN)} className={`flex-1 text-xs font-medium transition-colors ${lang === Language.CN ? 'bg-amber-800 text-amber-100' : 'text-neutral-500 hover:bg-[#1f1a16]'}`}>中文</button>
-                            <div className="w-[1px] bg-[#3e3228]"></div>
-                            <button onClick={() => setLang(Language.EN)} className={`flex-1 text-xs font-medium transition-colors ${lang === Language.EN ? 'bg-amber-800 text-amber-100' : 'text-neutral-500 hover:bg-[#1f1a16]'}`}>EN</button>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.difficulty}</label>
+                            <select 
+                                value={difficulty} 
+                                onChange={(e) => setDifficulty(e.target.value as Difficulty)}
+                                className="w-full bg-[#15120f] border border-[#3e3228] rounded-lg px-3 py-2 text-sm text-amber-100 focus:border-amber-500 outline-none transition-colors hover:border-amber-700"
+                                disabled={turn === aiSide}
+                            >
+                                {Object.values(Difficulty).map(d => (
+                                    <option key={d} value={d}>{t.difficulties[d]}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.language}</label>
+                            <div className="flex bg-[#15120f] rounded-lg border border-[#3e3228] overflow-hidden h-[38px]">
+                                <button onClick={() => setLang(Language.CN)} className={`flex-1 text-xs font-medium transition-colors ${lang === Language.CN ? 'bg-amber-800 text-amber-100' : 'text-neutral-500 hover:bg-[#1f1a16]'}`}>中文</button>
+                                <div className="w-[1px] bg-[#3e3228]"></div>
+                                <button onClick={() => setLang(Language.EN)} className={`flex-1 text-xs font-medium transition-colors ${lang === Language.EN ? 'bg-amber-800 text-amber-100' : 'text-neutral-500 hover:bg-[#1f1a16]'}`}>EN</button>
+                            </div>
                         </div>
                     </div>
                 </div>
                 
                 <div className="flex gap-3">
                     <button 
-                        onClick={resetGame} 
+                        onClick={() => resetGame()} 
                         className="flex-1 py-3 rounded-lg bg-gradient-to-b from-amber-700 to-amber-800 text-amber-100 font-bold text-sm shadow-[0_2px_0_rgba(0,0,0,0.2)] active:translate-y-[1px] active:shadow-none transition-all border border-amber-600/30 hover:brightness-110"
                     >
                         {t.newGame}

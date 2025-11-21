@@ -3,20 +3,10 @@ import { BoardState, Difficulty, Language, Move, Side, PieceType, Position } fro
 import { boardToFen } from "../utils/gameLogic";
 
 // --- 0x88 Board Representation Constants ---
-// Board is 16x16 (256 length array). Valid squares are: row 0-9, col 0-8.
-// 0x88 test: square & 0x88 == 0 implies on board.
-// Actually for 10 rows (0-9), 9 * 16 = 144. So 0x88 works for columns (0-7) but we have 9 cols (0-8).
-// Standard 0x88 is for 8x8.
-// For Xiangqi (9x10), we use a slightly larger mailbox or custom stride.
-// Let's use Stride = 16.
-// Valid: (sq & 0x0F) < 9 && (sq >> 4) < 10.
-
 const BOARD_SIZE = 256;
 const ROW_STRIDE = 16;
 
 // Piece Encodings
-// Color: Red = 8 (0x08), Black = 16 (0x10)
-// Type: K=1, A=2, E=3, H=4, R=5, C=6, P=7
 const RED: number = 8;
 const BLACK: number = 16;
 const COLOR_MASK: number = 24; // 0x18
@@ -31,10 +21,11 @@ const P_CANNON = 6;
 const P_PAWN = 7;
 
 // Zobrist Keys
-let ZOBRIST_TABLE: number[][] = []; // [square][piece_color_type]
+let ZOBRIST_TABLE: number[][] = []; 
 let SIDE_KEY: number = 0;
 
-const initZobrist = () => {
+// Initialize or Re-initialize Zobrist keys for variety
+export const initZobrist = () => {
     ZOBRIST_TABLE = Array(256).fill(0).map(() => 
         Array(24).fill(0).map(() => (Math.random() * 0xFFFFFFFF) | 0)
     );
@@ -50,11 +41,9 @@ class Engine {
     blackKingPos: number;
     
     // Transposition Table
-    // Map<hash, {depth, score, type, bestMove}>
-    // type: 0=Exact, 1=LowerBound(Alpha), 2=UpperBound(Beta)
     tt: Map<number, {depth: number, score: number, type: number, move?: number}>;
     
-    historyTable: Int32Array; // History Heuristic
+    historyTable: Int32Array; 
     nodes: number;
     stopTime: number;
     abort: boolean;
@@ -62,13 +51,19 @@ class Engine {
     constructor() {
         this.board = new Int8Array(BOARD_SIZE);
         this.tt = new Map();
-        this.historyTable = new Int32Array(BOARD_SIZE * BOARD_SIZE); // Simply from->to index
+        this.historyTable = new Int32Array(BOARD_SIZE * BOARD_SIZE); 
         this.nodes = 0;
         this.turn = RED;
         this.redKingPos = 0;
         this.blackKingPos = 0;
         this.stopTime = 0;
         this.abort = false;
+    }
+
+    reset() {
+        this.tt.clear();
+        this.historyTable.fill(0);
+        initZobrist(); // Re-shuffle the "personality" of the engine
     }
 
     // Import BoardState from UI
@@ -102,12 +97,12 @@ class Engine {
         }
     }
 
-    // Generate Zobrist Hash for current board
+    // Generate Zobrist Hash
     getHash(): number {
         let h = 0;
         if (this.turn === BLACK) h ^= SIDE_KEY;
         for (let i = 0; i < BOARD_SIZE; i++) {
-            if ((i & 0x0F) < 9 && (i >> 4) < 10) { // Valid square
+            if ((i & 0x0F) < 9 && (i >> 4) < 10) { 
                  const p = this.board[i];
                  if (p !== 0) {
                      h ^= ZOBRIST_TABLE[i][p];
@@ -118,7 +113,6 @@ class Engine {
     }
     
     // --- Move Generation ---
-    // Returns array of moves (packed integers: from << 8 | to)
     generateMoves(captureOnly: boolean = false): number[] {
         const moves: number[] = [];
         const side = this.turn;
@@ -132,10 +126,8 @@ class Engine {
                 
                 const type = p & TYPE_MASK;
                 
-                // Piece specific logic
                 switch (type) {
                     case P_KING:
-                        // Orthogonal 1 step, within palace
                         [[0,1], [0,-1], [1,0], [-1,0]].forEach(([dr, dc]) => {
                             const nr = r + dr, nc = c + dc;
                             if (nc >= 3 && nc <= 5 && ((side === RED && nr >= 7) || (side === BLACK && nr <= 2))) {
@@ -144,7 +136,6 @@ class Engine {
                         });
                         break;
                     case P_ADVISOR:
-                        // Diagonal 1 step, within palace
                         [[1,1], [1,-1], [-1,1], [-1,-1]].forEach(([dr, dc]) => {
                             const nr = r + dr, nc = c + dc;
                             if (nc >= 3 && nc <= 5 && ((side === RED && nr >= 7) || (side === BLACK && nr <= 2))) {
@@ -153,14 +144,11 @@ class Engine {
                         });
                         break;
                     case P_ELEPHANT:
-                        // Diagonal 2 steps, no river crossing, no blocking eye
                         [[2,2], [2,-2], [-2,2], [-2,-2]].forEach(([dr, dc]) => {
                             const nr = r + dr, nc = c + dc;
                             if (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8) {
-                                // River check
                                 if (side === RED && nr < 5) return;
                                 if (side === BLACK && nr > 4) return;
-                                // Eye check
                                 const eyeR = r + dr/2, eyeC = c + dc/2;
                                 if (this.board[(eyeR<<4)+eyeC] === 0) {
                                     this.addMove(moves, from, (nr<<4)+nc, captureOnly);
@@ -169,11 +157,9 @@ class Engine {
                         });
                         break;
                     case P_HORSE:
-                        // Sun/L shape
                         [[-2,-1], [-2,1], [2,-1], [2,1], [-1,-2], [-1,2], [1,-2], [1,2]].forEach(([dr, dc]) => {
                             const nr = r + dr, nc = c + dc;
                             if (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8) {
-                                // Leg check
                                 const legR = r + (Math.abs(dr)===2 ? dr/2 : 0);
                                 const legC = c + (Math.abs(dc)===2 ? dc/2 : 0);
                                 if (this.board[(legR<<4)+legC] === 0) {
@@ -224,10 +210,8 @@ class Engine {
                     case P_PAWN:
                         const forward = side === RED ? -1 : 1;
                         const crossed = side === RED ? r <= 4 : r >= 5;
-                        // Forward
                         const fr = r + forward;
                         if (fr >= 0 && fr <= 9) this.addMove(moves, from, (fr<<4)+c, captureOnly);
-                        // Horizontal if crossed
                         if (crossed) {
                             if (c > 0) this.addMove(moves, from, (r<<4)+(c-1), captureOnly);
                             if (c < 8) this.addMove(moves, from, (r<<4)+(c+1), captureOnly);
@@ -288,7 +272,6 @@ class Engine {
         const kingC = kingPos & 0x0F;
         const enemy = side === RED ? BLACK : RED;
 
-        // 1. Check for Flying General
         const otherKing = side === RED ? this.blackKingPos : this.redKingPos;
         if ((otherKing & 0x0F) === kingC) {
             let blocked = false;
@@ -303,12 +286,6 @@ class Engine {
             if (!blocked) return true;
         }
 
-        // 2. Check normal attacks
-        // Simulate by seeing if any enemy piece can attack kingPos
-        // Optimized reverse check:
-        // Can a Knight jump to King? Can a Rook slide to King?
-        
-        // Check Rook/Cannon lines
         const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
         for(const [dr, dc] of dirs) {
             let jump = false;
@@ -322,24 +299,14 @@ class Engine {
                     const color = p & COLOR_MASK;
                     if (color === enemy) {
                         if (!jump && (type === P_ROOK || type === P_KING || type === P_PAWN)) {
-                             // Pawn check: only if 1 step forward/side
                              if (type === P_PAWN) {
-                                 const forward = enemy === RED ? -1 : 1;
                                  const pDr = r - kingR;
-                                 const pDc = c - kingC;
-                                 // Enemy Red Pawn at r,c attacking Black King at kingR,kingC?
-                                 // Enemy Red Pawn attacks 'forward' (decreases row index) or side
-                                 // wait, 'forward' for Red is row--, so r should be > kingR
-                                 // The distance is already calculated.
-                                 if (Math.abs(pDr) + Math.abs(pDc) === 1) {
-                                     // Must be valid pawn move
+                                 if (Math.abs(pDr) + Math.abs(c - kingC) === 1) {
                                      const crossed = enemy === RED ? r <= 4 : r >= 5;
                                      if (!crossed) {
-                                         // Must be forward only
-                                         if (enemy === RED && pDr === 1 && pDc === 0) return true;
-                                         if (enemy === BLACK && pDr === -1 && pDc === 0) return true;
+                                         if (enemy === RED && pDr === 1) return true;
+                                         if (enemy === BLACK && pDr === -1) return true;
                                      } else {
-                                         // Forward or Side
                                          if (enemy === RED && pDr >= 0) return true; 
                                          if (enemy === BLACK && pDr <= 0) return true;
                                      }
@@ -352,28 +319,22 @@ class Engine {
                         }
                     }
                     if (!jump) jump = true;
-                    else break; // Second piece blocks cannon
+                    else break; 
                 }
             }
         }
         
-        // Check Horse
         const horseLegs = [[-2,-1], [-2,1], [2,-1], [2,1], [-1,-2], [-1,2], [1,-2], [1,2]];
         for(const [dr, dc] of horseLegs) {
              const r = kingR + dr, c = kingC + dc;
              if(r>=0 && r<=9 && c>=0 && c<=8) {
                  const p = this.board[(r<<4)+c];
                  if (p !== 0 && (p & COLOR_MASK) === enemy && (p & TYPE_MASK) === P_HORSE) {
-                     // Check leg blocking
-                     const legR = kingR + (Math.abs(dr)===2 ? dr/2 : 0); // Reverse logic from horse to king? No, check from king to horse is symmetric leg.
-                     // Actually, if Horse is at (r,c) attacking King at (kr, kc), 
-                     // the leg is at (r - sign(dr)/2 ...). 
-                     // Easier: Check if Horse at (r,c) is blocked from hitting (kr, kc).
-                     // Horse move logic: from (r,c) to (kr,kc). Leg is at r + (kr-r)/2? No.
-                     // Leg is standard.
-                     const lR = r + (Math.abs(kingR-r)===2 ? (kingR-r)/2 : 0);
-                     const lC = c + (Math.abs(kingC-c)===2 ? (kingC-c)/2 : 0);
-                     if (this.board[(lR<<4)+lC] === 0) return true;
+                     const moveDr = -dr;
+                     const moveDc = -dc;
+                     const legR = Math.abs(moveDr) === 2 ? (r + kingR) / 2 : r;
+                     const legC = Math.abs(moveDc) === 2 ? (c + kingC) / 2 : c;
+                     if (this.board[(legR<<4)+legC] === 0) return true;
                  }
              }
         }
@@ -382,10 +343,8 @@ class Engine {
     }
 
     evaluate(): number {
-        // Simply Material + PST
         let score = 0;
-        // Material weights
-        const M = [0, 10000, 200, 200, 450, 900, 450, 100]; // K, A, E, H, R, C, P
+        const M = [0, 10000, 200, 200, 450, 900, 450, 100]; 
         
         for(let i=0; i<BOARD_SIZE; i++) {
             if ((i&0x0F)<9 && (i>>4)<10) {
@@ -395,27 +354,22 @@ class Engine {
                     const color = p & COLOR_MASK;
                     
                     let val = M[type];
-                    // PST simplified bonuses
                     const r = i >> 4;
                     const c = i & 0x0F;
                     const isRed = color === RED;
-                    // Flip row for Black to look up from Red perspective if PST is symmetric
-                    // But here we just apply logical bonuses code-wise for speed
                     
                     if (type === P_PAWN) {
                         const crossed = isRed ? r <= 4 : r >= 5;
                         if (crossed) {
-                            val += 20; // Over river
-                            if ((isRed && r <= 1) || (!isRed && r >= 8)) val -= 10; // Too deep
+                            val += 20; 
+                            if ((isRed && r <= 1) || (!isRed && r >= 8)) val -= 10; 
                         } else {
-                            // Home pawn weak except center?
                             if (c === 4) val += 10; 
                         }
                     } else if (type === P_HORSE) {
-                        if (c === 4) val += 10; // Central horse
+                        if (c === 4) val += 10; 
                         if (crossedRiver(r, isRed)) val += 20;
                     } else if (type === P_CANNON) {
-                        // Central cannon good
                         if (c === 4) val += 20;
                     }
 
@@ -423,15 +377,15 @@ class Engine {
                 }
             }
         }
-        
-        // Mobility (Count legal moves for flexibility) - simplified
-        // Doing full move gen for eval is slow. 
-        // Maybe just penalty for trapped pieces.
+
+        // Add randomized noise based on board hash
+        // This ensures the AI prefers slightly different positions in different game sessions (after reset)
+        // but remains consistent within a single search calculation.
+        score += (this.getHash() & 0x1F) - 16;
 
         return this.turn === RED ? score : -score;
     }
 
-    // --- Alpha Beta Search with Extensions ---
     search(depth: number, alpha: number, beta: number, ply: number, isNull: boolean): number {
         this.nodes++;
         if ((this.nodes & 2047) === 0) {
@@ -441,26 +395,18 @@ class Engine {
 
         const isCheck = this.isKingInCheck(this.turn);
 
-        // Checkmate/Stalemate detection logic happens if no moves found below.
-
-        // Transposition Table Lookup
-        // Simple key generation (should be Zobrist)
-        // For now using basic depth check. 
-        // Implementing simple hash map key.
         const hash = this.getHash();
         const ttEntry = this.tt.get(hash);
-        if (ttEntry && ttEntry.depth >= depth && !isCheck) { // Don't cut on check
-            if (ttEntry.type === 0) return ttEntry.score; // Exact
-            if (ttEntry.type === 1 && ttEntry.score >= beta) return ttEntry.score; // Lower bound >= beta -> beta cut
-            if (ttEntry.type === 2 && ttEntry.score <= alpha) return ttEntry.score; // Upper bound <= alpha -> alpha cut
+        if (ttEntry && ttEntry.depth >= depth && !isCheck) {
+            if (ttEntry.type === 0) return ttEntry.score; 
+            if (ttEntry.type === 1 && ttEntry.score >= beta) return ttEntry.score; 
+            if (ttEntry.type === 2 && ttEntry.score <= alpha) return ttEntry.score; 
         }
 
         if (depth <= 0) {
             return this.quiescence(alpha, beta);
         }
 
-        // Null Move Pruning
-        // If not in check, and depth is high enough, skip a turn and see if beta cut
         if (!isNull && !isCheck && depth >= 3) {
             this.turn = this.turn === RED ? BLACK : RED;
             const val = -this.search(depth - 1 - 2, -beta, -beta + 1, ply + 1, true);
@@ -470,18 +416,13 @@ class Engine {
         }
 
         let moves = this.generateMoves();
-        // Move Ordering: TT Move -> Captures -> History
         moves.sort((a, b) => {
             if (ttEntry && ttEntry.move === a) return -1;
             if (ttEntry && ttEntry.move === b) return 1;
             
-            // Capture heuristic
             const capA = this.board[a & 0xFF] !== 0 ? 1000 : 0;
             const capB = this.board[b & 0xFF] !== 0 ? 1000 : 0;
             
-            // MVV-LVA could be added here
-            
-            // History
             const histA = this.historyTable[((a>>8)<<8) + (a&0xFF)] || 0;
             const histB = this.historyTable[((b>>8)<<8) + (b&0xFF)] || 0;
             
@@ -491,31 +432,25 @@ class Engine {
         let legalMoves = 0;
         let bestScore = -Infinity;
         let bestMove = 0;
-        let ttType = 2; // Alpha (Upper Bound) default
+        let ttType = 2; 
 
         for (let i = 0; i < moves.length; i++) {
             const move = moves[i];
             const capture = this.makeMove(move);
             
-            // Verify legality (King safety)
-            if (this.isKingInCheck(this.turn === RED ? BLACK : RED)) { // We just swapped turn, check IF 'previous' side is in check
+            if (this.isKingInCheck(this.turn === RED ? BLACK : RED)) { 
                  this.undoMove(move, capture.captured);
                  continue;
             }
             legalMoves++;
 
-            // PVS (Principal Variation Search)
             let score;
             if (i === 0) {
                 score = -this.search(depth - 1, -beta, -alpha, ply + 1, false);
             } else {
-                // Late Move Reduction (LMR)
-                // if (i > 4 && depth > 2 && !capture.captured && !isCheck) ...
-                
-                // Null Window Search
                 score = -this.search(depth - 1, -alpha - 1, -alpha, ply + 1, false);
                 if (score > alpha && score < beta) {
-                    score = -this.search(depth - 1, -beta, -alpha, ply + 1, false); // Re-search
+                    score = -this.search(depth - 1, -beta, -alpha, ply + 1, false);
                 }
             }
 
@@ -530,32 +465,23 @@ class Engine {
 
             if (score > alpha) {
                 alpha = score;
-                ttType = 0; // Exact
+                ttType = 0; 
             }
             
             if (alpha >= beta) {
-                // Killer/History update
                 if (capture.captured === 0) {
-                    const idx = ((move>>8)<<8) + (move&0xFF); // Simple map key based on from/to? No, Array index.
-                    // But from/to can be large.
-                    // use smaller history table or map.
-                    // current history table size 65536 (256*256).
-                    // from<<8 | to is max 65535.
-                    // idx is move itself if packed as short.
                     this.historyTable[move] = (this.historyTable[move] || 0) + depth * depth;
                 }
-                ttType = 1; // Lower Bound (Beta cut)
+                ttType = 1; 
                 break;
             }
         }
 
         if (legalMoves === 0) {
-            return isCheck ? -20000 + ply : 0; // Mate vs Stalemate
+            return isCheck ? -20000 + ply : 0; 
         }
 
-        // Store in TT
         this.tt.set(hash, { depth, score: bestScore, type: ttType, move: bestMove });
-        
         return bestScore;
     }
 
@@ -565,8 +491,7 @@ class Engine {
         if (standPat >= beta) return beta;
         if (alpha < standPat) alpha = standPat;
 
-        const moves = this.generateMoves(true); // Captures only
-        // Sort captures by MVV-LVA
+        const moves = this.generateMoves(true); 
         moves.sort((a, b) => {
              const vA = (this.board[a&0xFF] & TYPE_MASK) - (this.board[a>>8] & TYPE_MASK);
              const vB = (this.board[b&0xFF] & TYPE_MASK) - (this.board[b>>8] & TYPE_MASK);
@@ -589,19 +514,21 @@ class Engine {
     }
 }
 
-// Helper for crossed river
 const crossedRiver = (r: number, isRed: boolean) => isRed ? r <= 4 : r >= 5;
 
-// --- Entry Point ---
-
 const globalEngine = new Engine();
+
+// Reset function exposed to UI
+export const resetEngine = () => {
+    globalEngine.reset();
+};
 
 export const getBestMove = async (
   board: BoardState,
   turn: Side,
   difficulty: Difficulty,
   lang: Language
-): Promise<{ move: Move; reasoning: string } | null> => {
+): Promise<{ move: Move; reasoning: string, score: number } | null> => {
     
     globalEngine.loadBoard(board, turn);
     globalEngine.abort = false;
@@ -623,12 +550,10 @@ export const getBestMove = async (
     let bestMoveVal = 0;
     let bestScore = 0;
     
-    // Iterative Deepening
     for (let d = 1; d <= maxDepth; d++) {
         const score = globalEngine.search(d, -30000, 30000, 0, false);
         if (globalEngine.abort) break;
         
-        // Retrieve best move from TT for root
         const hash = globalEngine.getHash();
         const entry = globalEngine.tt.get(hash);
         if (entry && entry.move) {
@@ -636,18 +561,18 @@ export const getBestMove = async (
             bestScore = score;
         }
         
-        // Early exit on mate
         if (Math.abs(score) > 15000) break;
     }
     
     if (bestMoveVal === 0) {
-        // Fallback
         const moves = globalEngine.generateMoves();
-        if (moves.length > 0) bestMoveVal = moves[0];
-        else return null; // Mate
+        if (moves.length > 0) {
+            // If no best move found (e.g. due to very short time or bug), pick random safe move
+            bestMoveVal = moves[Math.floor(Math.random() * moves.length)];
+        }
+        else return null; 
     }
     
-    // Convert internal move back to UI Move
     const fromIdx = bestMoveVal >> 8;
     const toIdx = bestMoveVal & 0xFF;
     const finalMove: Move = {
@@ -655,15 +580,15 @@ export const getBestMove = async (
         to: { r: toIdx >> 4, c: toIdx & 0x0F }
     };
     
-    // Generate text
     const scoreText = bestScore > 0 ? `+${bestScore}` : `${bestScore}`;
     const nodesK = (globalEngine.nodes / 1000).toFixed(1) + 'k';
     const reasoning = lang === Language.CN 
-        ? `深度 ${maxDepth} | 节点 ${nodesK} | 评分 ${scoreText} | 策略: 控制中枢`
-        : `Depth ${maxDepth} | Nodes ${nodesK} | Eval ${scoreText} | Strategy: Control Center`;
+        ? `深度 ${maxDepth} | 节点 ${nodesK} | 评分 ${scoreText} | 策略: 综合计算`
+        : `Depth ${maxDepth} | Nodes ${nodesK} | Eval ${scoreText} | Strategy: Calculated`;
 
     return {
         move: finalMove,
-        reasoning: reasoning
+        reasoning: reasoning,
+        score: bestScore
     };
 };

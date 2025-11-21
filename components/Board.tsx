@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { BoardState, Move, Piece, PieceType, Position, Side } from '../types';
 
@@ -8,9 +9,10 @@ interface BoardProps {
   lastMove: Move | null;
   validMoves: Position[];
   isPlayerTurn: boolean;
+  flipped: boolean;
 }
 
-const PieceComponent: React.FC<{ piece: Piece }> = ({ piece }) => {
+const PieceComponent: React.FC<{ piece: Piece, flipped: boolean }> = ({ piece, flipped }) => {
   const isRed = piece.side === Side.RED;
   
   const getLabel = (p: Piece) => {
@@ -52,7 +54,7 @@ const PieceComponent: React.FC<{ piece: Piece }> = ({ piece }) => {
   const borderColor = isRed ? "border-[#dcb386]" : "border-[#dcb386]";
   
   return (
-    <div className={`${baseStyle} ${pieceGradient} ${shadowStyle}`}>
+    <div className={`${baseStyle} ${pieceGradient} ${shadowStyle}`} style={{ transform: flipped ? 'rotate(180deg)' : 'none' }}>
         {/* Carved Ring */}
         <div className={`${innerRingStyle} ${borderColor}`}>
             <span 
@@ -71,7 +73,8 @@ export const Board: React.FC<BoardProps> = ({
   onSquareClick, 
   selectedPos, 
   lastMove, 
-  validMoves
+  validMoves,
+  flipped
 }) => {
   
   const isSelected = (r: number, c: number) => selectedPos?.r === r && selectedPos?.c === c;
@@ -79,13 +82,8 @@ export const Board: React.FC<BoardProps> = ({
   const isLastMoveSource = (r: number, c: number) => lastMove?.from.r === r && lastMove?.from.c === c;
   const isLastMoveDest = (r: number, c: number) => lastMove?.to.r === r && lastMove?.to.c === c;
 
-  // SVG Grid Config
-  // ViewBox is 0 0 90 100.
-  // CSS Grid puts pieces at centers: 5, 15, 25...
-  // We draw lines exactly on these coordinates.
-  
   return (
-    <div className="relative select-none">
+    <div className="relative select-none transition-transform duration-500" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }}>
       {/* Outer Frame */}
       <div className="p-3 sm:p-4 bg-[#5c4033] rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-[#3e2b22]">
           
@@ -101,40 +99,29 @@ export const Board: React.FC<BoardProps> = ({
             <div className="absolute inset-0 grid grid-rows-10 grid-cols-9 z-0">
                  <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 90 100">
                     
-                    {/* Border Rectangle (Outer Bounds of Grid) */}
-                    {/* Grid goes from 5 to 85 (X) and 5 to 95 (Y). Thickness 2 to look like a frame */}
+                    {/* Border Rectangle */}
                     <rect x="4" y="4" width="82" height="92" fill="none" stroke="#5d3a1a" strokeWidth="2" />
 
-                    {/* Horizontal Lines (Rows) */}
-                    {/* Row 0 is y=5, Row 9 is y=95 */}
+                    {/* Horizontal Lines */}
                     {Array.from({ length: 10 }).map((_, i) => (
                         <line key={`h-${i}`} x1="5" y1={5 + i * 10} x2="85" y2={5 + i * 10} stroke="#5d3a1a" strokeWidth="0.6" />
                     ))}
 
-                    {/* Vertical Lines (Cols) */}
-                    {/* Col 0 is x=5, Col 8 is x=85 */}
-                    {/* Left and Right borders are full height (handled by rect, but let's reinforce logical grid) */}
-                    
-                    {/* Inner Verticals (1 to 7): Top Half */}
+                    {/* Vertical Lines */}
                     {Array.from({ length: 7 }).map((_, i) => (
                         <line key={`v-top-${i}`} x1={15 + i * 10} y1="5" x2={15 + i * 10} y2="45" stroke="#5d3a1a" strokeWidth="0.6" />
                     ))}
-                    {/* Inner Verticals (1 to 7): Bottom Half */}
                     {Array.from({ length: 7 }).map((_, i) => (
                         <line key={`v-bot-${i}`} x1={15 + i * 10} y1="55" x2={15 + i * 10} y2="95" stroke="#5d3a1a" strokeWidth="0.6" />
                     ))}
                     
-                    {/* Palaces (X shapes) */}
-                    {/* Top: (35,5) to (55,25) */}
+                    {/* Palaces */}
                     <line x1="35" y1="5" x2="55" y2="25" stroke="#5d3a1a" strokeWidth="0.6" />
                     <line x1="55" y1="5" x2="35" y2="25" stroke="#5d3a1a" strokeWidth="0.6" />
-                    
-                    {/* Bottom: (35,75) to (55,95) */}
                     <line x1="35" y1="95" x2="55" y2="75" stroke="#5d3a1a" strokeWidth="0.6" />
                     <line x1="55" y1="95" x2="35" y2="75" stroke="#5d3a1a" strokeWidth="0.6" />
 
-                    {/* Setup Marks (Crosses) */}
-                    {/* Corrected coordinates: center x = 5 + c*10, y = 5 + r*10 */}
+                    {/* Setup Marks */}
                     {[
                         [2,1], [2,7], // Cannons Top
                         [3,0], [3,2], [3,4], [3,6], [3,8], // Pawns Top
@@ -143,36 +130,35 @@ export const Board: React.FC<BoardProps> = ({
                     ].map(([r, c], idx) => {
                         const x = 5 + c * 10;
                         const y = 5 + r * 10;
-                        const g = 1; // gap from center
-                        const l = 2; // length of mark
+                        const g = 1; 
+                        const l = 2;
                         return (
                             <g key={`mark-${idx}`} stroke="#5d3a1a" strokeWidth="0.6">
-                                {/* Top Left */}
                                 {c > 0 && <polyline points={`${x-g-l},${y-g} ${x-g},${y-g} ${x-g},${y-g-l}`} fill="none" />}
-                                {/* Top Right */}
                                 {c < 8 && <polyline points={`${x+g+l},${y-g} ${x+g},${y-g} ${x+g},${y-g-l}`} fill="none" />}
-                                {/* Bottom Left */}
                                 {c > 0 && <polyline points={`${x-g-l},${y+g} ${x-g},${y+g} ${x-g},${y+g+l}`} fill="none" />}
-                                {/* Bottom Right */}
                                 {c < 8 && <polyline points={`${x+g+l},${y+g} ${x+g},${y+g} ${x+g},${y+g+l}`} fill="none" />}
                             </g>
                         )
                     })}
                     
-                    {/* River Text */}
-                    <text x="20" y="50" fontSize="6" fill="#5d3a1a" textAnchor="middle" dominantBaseline="middle" className="font-serif tracking-widest opacity-80" style={{ writingMode: 'vertical-rl', textOrientation: 'upright' }}>楚 河</text>
-                    <text x="70" y="50" fontSize="6" fill="#5d3a1a" textAnchor="middle" dominantBaseline="middle" className="font-serif tracking-widest opacity-80" style={{ writingMode: 'vertical-rl', textOrientation: 'upright' }}>漢 界</text>
+                    {/* River Text - Rotated if flipped */}
+                    <g style={{ transformOrigin: 'center', transform: flipped ? 'rotate(180deg)' : 'none' }}>
+                        <text x="20" y="50" fontSize="6" fill="#5d3a1a" textAnchor="middle" dominantBaseline="middle" className="font-serif tracking-widest opacity-80" style={{ writingMode: 'vertical-rl', textOrientation: 'upright' }}>楚 河</text>
+                        <text x="70" y="50" fontSize="6" fill="#5d3a1a" textAnchor="middle" dominantBaseline="middle" className="font-serif tracking-widest opacity-80" style={{ writingMode: 'vertical-rl', textOrientation: 'upright' }}>漢 界</text>
+                    </g>
                  </svg>
 
                  {/* Coordinates Labels */}
-                 {/* Top numbers (Black side, 1-9 left to right) */}
+                 {/* If flipped, we rotate labels individually */}
                  <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                     {/* Top numbers (Black side) */}
                      {Array.from({length: 9}).map((_, i) => (
-                         <span key={`tc-${i}`} className="absolute top-[-6%] text-[#eecfa1] text-[min(3vw,12px)] font-serif opacity-80 font-bold" style={{ left: `${5.5 + i * 11.11}%`, transform: 'translateX(-50%)' }}>{i + 1}</span>
+                         <span key={`tc-${i}`} className="absolute top-[-6%] text-[#eecfa1] text-[min(3vw,12px)] font-serif opacity-80 font-bold" style={{ left: `${5.5 + i * 11.11}%`, transform: `translateX(-50%) ${flipped ? 'rotate(180deg)' : ''}` }}>{flipped ? ['一','二','三','四','五','六','七','八','九'][i] : i + 1}</span>
                      ))}
-                     {/* Bottom numbers (Red side, 九-一 right to left) */}
+                     {/* Bottom numbers (Red side) */}
                      {['九','八','七','六','五','四','三','二','一'].map((char, i) => (
-                         <span key={`bc-${i}`} className="absolute bottom-[-6%] text-[#eecfa1] text-[min(3vw,12px)] font-serif opacity-80 font-bold" style={{ left: `${5.5 + i * 11.11}%`, transform: 'translateX(-50%)' }}>{char}</span>
+                         <span key={`bc-${i}`} className="absolute bottom-[-6%] text-[#eecfa1] text-[min(3vw,12px)] font-serif opacity-80 font-bold" style={{ left: `${5.5 + i * 11.11}%`, transform: `translateX(-50%) ${flipped ? 'rotate(180deg)' : ''}` }}>{flipped ? i+1 : char}</span>
                      ))}
                  </div>
 
@@ -200,7 +186,7 @@ export const Board: React.FC<BoardProps> = ({
                         {/* Piece Render */}
                         {piece && (
                             <div className={`w-full h-full transition-transform duration-200 ease-out ${isSelected(r, c) ? '-translate-y-2 shadow-xl' : ''} ${(isLastMoveDest(r, c) && !isSelected(r,c)) ? 'scale-105' : ''}`}>
-                                <PieceComponent piece={piece} />
+                                <PieceComponent piece={piece} flipped={flipped} />
                             </div>
                         )}
                         </div>
