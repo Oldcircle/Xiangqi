@@ -141,6 +141,58 @@ export const Board: React.FC<BoardProps> = ({
                             </g>
                         )
                     })}
+
+                    {/* Move Trajectory Layer (Meteor Effect) */}
+                    {lastMove && (() => {
+                        const targetPiece = board[lastMove.to.r][lastMove.to.c];
+                        if (targetPiece) {
+                            const isRed = targetPiece.side === Side.RED;
+                            
+                            // Coords
+                            const x1 = 5 + lastMove.from.c * 10;
+                            const y1 = 5 + lastMove.from.r * 10;
+                            const x2 = 5 + lastMove.to.c * 10;
+                            const y2 = 5 + lastMove.to.r * 10;
+
+                            // Lighter, softer colors for the meteor tail
+                            // Head color is visible, tail is transparent
+                            // Red: Bright Red with opacity
+                            // Black: Dark Grey with opacity
+                            const headColor = isRed ? "rgba(239, 68, 68, 0.7)" : "rgba(60, 60, 60, 0.7)";
+                            const gradId = `traj-grad-${isRed ? 'red' : 'black'}`;
+
+                            return (
+                                <g className="pointer-events-none">
+                                    <defs>
+                                        {/* Reduced size marker: viewBox 0 0 5 5, but displayed at 2.5x2.5 size */}
+                                        <marker id={`arrow-${isRed ? 'red' : 'black'}`} markerWidth="2.5" markerHeight="2.5" refX="5" refY="2.5" orient="auto" viewBox="0 0 5 5">
+                                            <path d="M0,0 L0,5 L5,2.5 z" fill={headColor} />
+                                        </marker>
+                                        {/* Meteor Gradient: Start transparent, End opaque */}
+                                        <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={x1} y1={y1} x2={x2} y2={y2}>
+                                            <stop offset="0%" stopColor={headColor} stopOpacity="0" />
+                                            <stop offset="100%" stopColor={headColor} stopOpacity="1" />
+                                        </linearGradient>
+                                    </defs>
+                                    
+                                    {/* Start Dot (Very faint echo of where it came from) */}
+                                    <circle cx={x1} cy={y1} r="1.5" fill={headColor} opacity="0.2" />
+
+                                    {/* The Meteor Tail */}
+                                    <line 
+                                        x1={x1} y1={y1} 
+                                        x2={x2} y2={y2} 
+                                        stroke={`url(#${gradId})`}
+                                        strokeWidth="2.5" 
+                                        strokeLinecap="round"
+                                        markerEnd={`url(#arrow-${isRed ? 'red' : 'black'})`}
+                                        className="animate-fade-in"
+                                    />
+                                </g>
+                            );
+                        }
+                        return null;
+                    })()}
                     
                     {/* River Text - Rotated if flipped */}
                     <g style={{ transformOrigin: 'center', transform: flipped ? 'rotate(180deg)' : 'none' }}>
@@ -150,7 +202,6 @@ export const Board: React.FC<BoardProps> = ({
                  </svg>
 
                  {/* Coordinates Labels */}
-                 {/* If flipped, we rotate labels individually */}
                  <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
                      {/* Top numbers (Black side) */}
                      {Array.from({length: 9}).map((_, i) => (
