@@ -4,6 +4,7 @@ import { Board } from './components/Board';
 import { createInitialBoard, getLegalMovesForPiece, isKingInCheck } from './utils/gameLogic';
 import { getBestMove as getBestMoveStd, resetEngine as resetEngineStd } from './services/engine'; 
 import { getBestMove as getBestMovePro, resetEnginePro } from './services/enginePro';
+import { getBestMoveWorld, resetEngineWorld } from './services/engineWorld';
 import { BoardState, Difficulty, GameStatus, Move, Position, Side, Language, MoveRecord } from './types';
 
 const translations = {
@@ -75,7 +76,7 @@ const translations = {
   }
 };
 
-type EngineType = 'Standard' | 'Pro';
+type EngineType = 'Standard' | 'Pro' | 'World';
 
 const App: React.FC = () => {
   const [board, setBoard] = useState<BoardState>(createInitialBoard());
@@ -87,24 +88,25 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<GameStatus>(GameStatus.PLAYING);
   const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.INTERMEDIATE);
   const [lang, setLang] = useState<Language>(Language.CN);
-  const [engineType, setEngineType] = useState<EngineType>('Standard');
+  const [engineType, setEngineType] = useState<EngineType>('Pro');
   const [aiReasoning, setAiReasoning] = useState<string>("");
   const [isThinking, setIsThinking] = useState(false);
   const [moveHistory, setMoveHistory] = useState<MoveRecord[]>([]);
   const [isCheck, setIsCheck] = useState(false);
-  const [evalScore, setEvalScore] = useState(0); // Positive = Red advantage, Negative = Black
+  const [evalScore, setEvalScore] = useState(0); 
+  
+  const [checkCounts, setCheckCounts] = useState<{r: number, b: number}>({r: 0, b: 0});
+
   const [historyStack, setHistoryStack] = useState<{
       board: BoardState, 
       turn: Side, 
       lastMove: Move | null, 
       status: GameStatus, 
       moveHistory: MoveRecord[], 
-      evalScore: number 
+      evalScore: number,
+      checkCounts: {r: number, b: number}
   }[]>([]);
   
-  // Consecutive checks logic
-  const [consecutiveChecks, setConsecutiveChecks] = useState(0);
-
   const aiSide = playerSide === Side.RED ? Side.BLACK : Side.RED;
   const t = translations[lang];
 
@@ -115,9 +117,10 @@ const App: React.FC = () => {
       lastMove,
       status,
       moveHistory: [...moveHistory],
-      evalScore
+      evalScore,
+      checkCounts: {...checkCounts}
     }]);
-  }, [board, turn, lastMove, status, moveHistory, evalScore]);
+  }, [board, turn, lastMove, status, moveHistory, evalScore, checkCounts]);
 
   const performUndo = () => {
     if (historyStack.length < 2) return;
@@ -125,8 +128,8 @@ const App: React.FC = () => {
 
     const newStack = [...historyStack];
     if (newStack.length >= 2) {
-        newStack.pop(); // Remove current state
-        const targetState = newStack.pop(); // Get previous valid state (before AI + Player move)
+        newStack.pop(); 
+        const targetState = newStack.pop(); 
         
         if (targetState) {
             setBoard(targetState.board);
@@ -135,10 +138,10 @@ const App: React.FC = () => {
             setStatus(targetState.status);
             setMoveHistory(targetState.moveHistory);
             setEvalScore(targetState.evalScore);
+            setCheckCounts(targetState.checkCounts);
             setHistoryStack(newStack);
             setAiReasoning("(已悔棋 / Undone)");
-            setIsCheck(false);
-            setConsecutiveChecks(0);
+            setIsCheck(false); 
         }
     }
   };
@@ -148,19 +151,30 @@ const App: React.FC = () => {
         const newBoard = prev.map(row => [...row]);
         const piece = newBoard[move.from.r][move.from.c];
         if (!piece) return prev;
+        
+        // Execute move
         newBoard[move.to.r][move.to.c] = piece;
         newBoard[move.from.r][move.from.c] = null;
+        
+        const currentMover = turn;
         const nextTurn = turn === Side.RED ? Side.BLACK : Side.RED;
         
-        const inCheck = isKingInCheck(newBoard, nextTurn);
-        if (inCheck) {
-            setConsecutiveChecks(prev => prev + 1);
-            setIsCheck(true);
-        } else {
-            setConsecutiveChecks(0);
-            setIsCheck(false);
-        }
+        const opponentInCheck = isKingInCheck(newBoard, nextTurn);
+        
+        // Update Check Counts independently
+        setCheckCounts(prevCounts => {
+            const newCounts = { ...prevCounts };
+            if (currentMover === Side.RED) {
+                newCounts.r = opponentInCheck ? prevCounts.r + 1 : 0;
+            } else {
+                newCounts.b = opponentInCheck ? prevCounts.b + 1 : 0;
+            }
+            return newCounts;
+        });
 
+        setIsCheck(opponentInCheck);
+
+        // Win detection
         let redKing = false;
         let blackKing = false;
         newBoard.forEach(row => row.forEach(p => {
@@ -171,9 +185,11 @@ const App: React.FC = () => {
         }));
         if (!redKing) setStatus(GameStatus.BLACK_WIN);
         else if (!blackKing) setStatus(GameStatus.RED_WIN);
+        
         setTurn(nextTurn);
         return newBoard;
     });
+    
     setLastMove(move);
     setMoveHistory(prev => {
        const piece = board[move.from.r][move.from.c];
@@ -194,18 +210,24 @@ const App: React.FC = () => {
       setValidMoves(moves);
       return;
     }
+    
     if (selectedPos) {
       const isMoveValid = validMoves.some(m => m.r === pos.r && m.c === pos.c);
       if (isMoveValid) {
-        // Perpetual Check Prevention Check
-        if (consecutiveChecks >= 7) {
-             // Simulate move
+        // Perpetual Check Prevention
+        const myCheckCount = turn === Side.RED ? checkCounts.r : checkCounts.b;
+        
+        if (myCheckCount >= 7) {
              const tempBoard = board.map(row => [...row]);
              tempBoard[pos.r][pos.c] = tempBoard[selectedPos.r][selectedPos.c];
              tempBoard[selectedPos.r][selectedPos.c] = null;
+             
              const nextTurn = turn === Side.RED ? Side.BLACK : Side.RED;
              if (isKingInCheck(tempBoard, nextTurn)) {
-                 alert(lang === Language.CN ? "禁止长将（超过7次），请变招！" : "Perpetual check illegal (7+ checks). Choose another move.");
+                 const msg = lang === Language.CN 
+                    ? "禁止长将（已连续将军7次），请变招！" 
+                    : "Perpetual check illegal (7+ consecutive checks). Move elsewhere.";
+                 alert(msg);
                  return;
              }
         }
@@ -221,7 +243,6 @@ const App: React.FC = () => {
     }
   };
 
-  // AI Move Logic
   useEffect(() => {
     if (turn === aiSide && status === GameStatus.PLAYING) {
       const timer = setTimeout(async () => {
@@ -231,7 +252,10 @@ const App: React.FC = () => {
             await new Promise(r => setTimeout(r, 50));
             
             // Select Engine
-            const getMoveFn = engineType === 'Pro' ? getBestMovePro : getBestMoveStd;
+            let getMoveFn;
+            if (engineType === 'World') getMoveFn = getBestMoveWorld;
+            else if (engineType === 'Pro') getMoveFn = getBestMovePro;
+            else getMoveFn = getBestMoveStd;
             
             const result = await getMoveFn(board, aiSide, difficulty, lang);
             if (result && result.move) {
@@ -260,6 +284,7 @@ const App: React.FC = () => {
   const resetGame = (newSide?: Side) => {
     resetEngineStd(); 
     resetEnginePro();
+    resetEngineWorld();
     setBoard(createInitialBoard());
     setTurn(Side.RED); 
     if (newSide) setPlayerSide(newSide);
@@ -272,7 +297,7 @@ const App: React.FC = () => {
     setHistoryStack([]);
     setIsCheck(false);
     setEvalScore(0);
-    setConsecutiveChecks(0);
+    setCheckCounts({r: 0, b: 0});
   };
 
   const getEvalBarWidth = () => {
@@ -280,16 +305,17 @@ const App: React.FC = () => {
       return 50 + (clamped / 40); 
   };
 
+  const displayCheckCount = Math.max(checkCounts.r, checkCounts.b);
+
   return (
     <div className="min-h-screen bg-[#181512] text-[#e0d0c0] font-sans flex flex-col items-center py-4 sm:py-8">
-      {/* Background Effects */}
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_center,_rgba(60,40,30,0.2)_0%,_rgba(20,15,12,1)_100%)] pointer-events-none"></div>
 
       <div className="relative w-full max-w-6xl flex flex-col lg:flex-row items-start justify-center gap-8 px-4 z-10">
         
-        {/* Left Column: Board */}
+        {/* Left: Board */}
         <div className="w-full max-w-[550px] flex flex-col gap-4 mx-auto lg:mx-0">
-             {/* Status Header */}
+             {/* Status */}
              <div className="flex justify-between items-end px-2">
                 <div>
                     <h1 className="text-3xl sm:text-4xl font-bold font-serif text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-700 drop-shadow-md">
@@ -299,7 +325,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="text-right">
                      {isCheck && <div className="text-red-500 font-bold animate-pulse text-lg font-serif tracking-widest drop-shadow">{t.check}</div>}
-                     {consecutiveChecks > 0 && <div className="text-red-400 text-xs font-mono">Checks: {consecutiveChecks}/7</div>}
+                     {displayCheckCount > 0 && <div className="text-red-400 text-xs font-mono">Checks: {displayCheckCount}/7</div>}
                      <div className={`mt-1 px-3 py-1 rounded text-xs font-bold uppercase tracking-wide border ${
                          status !== GameStatus.PLAYING 
                             ? 'border-amber-500 text-amber-400 bg-amber-900/40' 
@@ -312,7 +338,7 @@ const App: React.FC = () => {
                 </div>
              </div>
              
-            {/* Evaluation Gauge */}
+            {/* Eval Bar */}
             <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden relative shadow-inner border border-neutral-700/50 group">
                 <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-20 transform -translate-x-1/2"></div>
                 <div 
@@ -324,7 +350,7 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* Board Component */}
+            {/* Board */}
             <div className="shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)] rounded-lg">
                 <Board 
                     board={board} 
@@ -338,25 +364,25 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Right Column: Controls & Logs */}
+        {/* Right: Controls */}
         <div className="w-full lg:w-[380px] flex flex-col gap-5">
             
-            {/* Control Panel */}
+            {/* Panel */}
             <div className="bg-[#231e1a]/80 backdrop-blur-md border border-white/5 rounded-xl p-6 shadow-xl">
                 <div className="space-y-4 mb-6">
-                    {/* Play As Selection */}
+                    {/* Play As */}
                     <div className="space-y-2">
                          <label className="text-[10px] uppercase tracking-widest text-amber-600 font-bold">{t.playAs}</label>
                          <div className="flex gap-2">
                              <button 
                                 onClick={() => resetGame(Side.RED)}
-                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.RED ? 'bg-red-900/40 border-red-700 text-red-400 shadow-[0_0_10px_rgba(220,38,38,0.2)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.RED ? 'bg-red-900/40 border-red-700 text-red-400' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
                              >
                                 {t.red} (先手)
                              </button>
                              <button 
                                 onClick={() => resetGame(Side.BLACK)}
-                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.BLACK ? 'bg-neutral-800 border-neutral-500 text-neutral-300 shadow-[0_0_10px_rgba(255,255,255,0.1)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${playerSide === Side.BLACK ? 'bg-neutral-800 border-neutral-500 text-neutral-300' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
                              >
                                 {t.black} (后手)
                              </button>
@@ -371,13 +397,19 @@ const App: React.FC = () => {
                                 onClick={() => setEngineType('Standard')}
                                 className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${engineType === 'Standard' ? 'bg-amber-900/40 border-amber-700 text-amber-400' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
                              >
-                                Standard (标准)
+                                Std (标准)
                              </button>
                              <button 
                                 onClick={() => setEngineType('Pro')}
-                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${engineType === 'Pro' ? 'bg-purple-900/40 border-purple-700 text-purple-400 shadow-[0_0_10px_rgba(168,85,247,0.2)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${engineType === 'Pro' ? 'bg-purple-900/40 border-purple-700 text-purple-400' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
                              >
                                 Pro (职业)
+                             </button>
+                             <button 
+                                onClick={() => setEngineType('World')}
+                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${engineType === 'World' ? 'bg-blue-900/40 border-blue-500 text-blue-300 shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'bg-[#15120f] border-[#3e3228] text-neutral-500 hover:border-neutral-600'}`}
+                             >
+                                World (第一)
                              </button>
                          </div>
                     </div>
@@ -424,11 +456,11 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* Analysis & Reasoning */}
+            {/* Analysis */}
             <div className="bg-[#231e1a]/80 backdrop-blur-md border border-white/5 rounded-xl overflow-hidden shadow-lg flex flex-col">
                 <div className="px-5 py-3 border-b border-white/5 bg-gradient-to-r from-[#2a241f] to-transparent flex justify-between items-center">
                      <h3 className="text-xs uppercase tracking-widest text-amber-500 font-bold flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${engineType === 'Pro' ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' : 'bg-amber-500'}`}></span>
+                        <span className={`w-2 h-2 rounded-full ${engineType === 'World' ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.8)]' : (engineType === 'Pro' ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' : 'bg-amber-500')}`}></span>
                         {t.strategyTitle}
                      </h3>
                      {isThinking && <span className="text-[10px] text-amber-400/70 animate-pulse">Computing...</span>}
@@ -440,7 +472,7 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* Move History Log */}
+            {/* History */}
             <div className="flex-1 bg-[#231e1a]/80 backdrop-blur-md border border-white/5 rounded-xl overflow-hidden shadow-lg flex flex-col max-h-[300px]">
                 <div className="px-5 py-3 border-b border-white/5 bg-gradient-to-r from-[#2a241f] to-transparent">
                     <h3 className="text-xs uppercase tracking-widest text-neutral-500 font-bold">{t.logTitle}</h3>
